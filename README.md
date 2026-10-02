@@ -6,7 +6,7 @@
 
 A [Claude Code](https://claude.com/claude-code) plugin that makes the agent terse, keeps it from re-grepping your repo every turn, and lets it finish the whole job instead of stopping at function 50.
 
-![version](https://img.shields.io/badge/version-0.10.3-7cf5c8?style=flat-square)
+![version](https://img.shields.io/badge/version-0.10.4-7cf5c8?style=flat-square)
 ![languages](https://img.shields.io/badge/languages-any-7cf5c8?style=flat-square)
 ![deps](https://img.shields.io/badge/dependencies-0-7cf5c8?style=flat-square)
 
@@ -56,7 +56,7 @@ Restart the session. Kasper turns itself on at every session start, no command n
 you:    make me a parser for this format
 kasper: ok cool im on it
         ...works silently...
-kasper: done: parser + tests added, затести и предлагай идеи
+kasper: done: parser + tests added
 ```
 
 **Unclear task**
@@ -138,7 +138,7 @@ Comments say why, not what.
 
 ```
 > /kasper
-kasper 0.10.3
+kasper 0.10.4
 mode: normal
 root: D:\projects\my-game
 graph: ready, 418 files, 3m old, inject 7.9k/8k chars

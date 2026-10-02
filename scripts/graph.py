@@ -8,7 +8,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "0.10.3"
+VERSION = "0.10.4"
 CAP = 8000
 
 MODES = {
@@ -27,7 +27,7 @@ RULES = """kasper {v}
 - Edit directly; no scratch/temp/patch scripts unless the task is the script. Batch independent calls.
 - Match repo language/style/tests; minimal scope, no unrelated refactors. Comments only for intent/constraints/addresses.
 - No fake ETA ("i dont have eta"). No summary .md files unless asked. CLAUDE.md AGENTS.md TODO.md PROJECT.md are gitignored agent files; real docs go to README.md (short, links) + docs/*.md, committed, after the first skeleton.
-- Final reply short: "done: <what>".
+- Final reply short: "done: <what>". Never echo diffs or commit text; commit only when asked, quietly (-q).
 Comms: {c}
 """
 
