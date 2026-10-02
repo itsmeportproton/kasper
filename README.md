@@ -6,7 +6,7 @@
 
 A [Claude Code](https://claude.com/claude-code) plugin that makes the agent terse, keeps it from re-grepping your repo every turn, and lets it finish the whole job instead of stopping at function 50.
 
-![version](https://img.shields.io/badge/version-0.10.2-7cf5c8?style=flat-square)
+![version](https://img.shields.io/badge/version-0.10.3-7cf5c8?style=flat-square)
 ![languages](https://img.shields.io/badge/languages-any-7cf5c8?style=flat-square)
 ![deps](https://img.shields.io/badge/dependencies-0-7cf5c8?style=flat-square)
 
@@ -32,7 +32,7 @@ Same task, two sessions:
 | | |
 |---|---|
 | **Terse** | No tool narration, no recaps, final reply is one short line. |
-| **Asks when it matters** | Ambiguous requirement? One grouped question beats 30k tokens of guessing. Obvious stuff it figures out itself. |
+| **Asks when it matters** | Ambiguous requirement? It opens a pick-one / pick-many question (`AskUserQuestion`) instead of guessing. Obvious stuff it figures out itself. |
 | **Graph first** | Builds a map of the repo (file, symbols, imports). The agent looks there before grepping. |
 | **Marathon** | Big plan or 200 similar functions: runs through, no "continue?". |
 | **Direct edits** | No `patch.py` / temp scripts that paste code into files. |
@@ -63,10 +63,19 @@ kasper: done: parser + tests added, затести и предлагай иде�
 
 ```
 you:    make auth work with external providers
-kasper: i have few questions to ask
-        - which protocol: OIDC/OAuth, SAML, custom?
-        - keep the existing local login?
-        - tokens in cookies or headers?
+kasper: ok, few questions
+
+        Which protocol?                         (pick one)
+        > OIDC / OAuth (Recommended)
+          SAML
+          Custom tokens
+
+        Keep the existing local login?          (pick one)
+        > Yes
+          No, replace it
+
+        Where do tokens live?                   (pick many)
+        [x] Cookies   [ ] Authorization header   [ ] Both
 ```
 
 **ETA**
@@ -129,8 +138,8 @@ Comments say why, not what.
 
 ```
 > /kasper
-kasper 0.10.2
-mode: normal (говорю когда полезно)
+kasper 0.10.3
+mode: normal
 root: D:\projects\my-game
 graph: ready, 418 files, 3m old, inject 7.9k/8k chars
 commands: status | graph | rebuild | mode | reinit | help
@@ -138,12 +147,12 @@ commands: status | graph | rebuild | mode | reinit | help
 
 ## Modes
 
-| mode | what it does | |
-|---|---|---|
-| `chatty` | useful commentary allowed, never routine tool narration | я пизжу по делу |
-| `normal` | ack, questions, real blockers, otherwise silent. **default** | говорю когда полезно |
-| `quiet` | questions, blockers and the final line only | почти молчу |
-| `mute` | silent unless it cannot continue without an answer | мне нахуй отрезали язык |
+| mode | what it does |
+|---|---|
+| `chatty` | useful commentary allowed, never routine tool narration |
+| `normal` | ack, questions, real blockers, otherwise silent. **default** |
+| `quiet` | questions, blockers and the final line only |
+| `mute` | silent unless it cannot continue without an answer |
 
 The mode is saved per repository in `.kasper/config.json`. Only the active mode's one-line rule goes into the context.
 

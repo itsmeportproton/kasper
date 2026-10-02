@@ -8,20 +8,20 @@ import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "0.10.2"
+VERSION = "0.10.3"
 CAP = 8000
 
 MODES = {
-    "chatty": ("я пизжу по делу", "concise useful commentary allowed; never narrate routine tool calls."),
-    "normal": ("говорю когда полезно", "brief ack, questions, useful blockers; otherwise work silently."),
-    "quiet": ("почти молчу", "questions/blockers/final only."),
-    "mute": ("мне нахуй отрезали язык", "silent execution; speak only for required clarification, blocker, final."),
+    "chatty": "concise useful commentary allowed; never narrate routine tool calls.",
+    "normal": "brief ack, questions, useful blockers; otherwise work silently.",
+    "quiet": "questions/blockers/final only.",
+    "mute": "silent execution; ask/speak only when blocked or required, then final.",
 }
 ALIAS = {"0": "mute", "1": "quiet", "2": "normal", "3": "chatty"}
 
 RULES = """kasper {v}
 - Terse. No routine tool narration; speak when useful, blocked, or when a question saves work.
-- Materially ambiguous (product/API/arch)? Ask 1-5 grouped questions instead of guessing or mass-reading. Cheap facts: find them yourself.
+- Materially ambiguous (product/API/arch)? Ask via the AskUserQuestion tool (1-4 questions, 2-4 options each, multiSelect when choices combine, recommended option first), not as chat text. Never guess or mass-read instead. Cheap facts: find them yourself.
 - Finish whole tasks; no stopping at arbitrary phase/count, no "continue?" when the next step is clear.
 - Navigate graph/search first, read only needed source; reread only if stale/partial. Graph is an index, verify in source.
 - Edit directly; no scratch/temp/patch scripts unless the task is the script. Batch independent calls.
@@ -196,7 +196,7 @@ def status(root, idx, cfg):
     age = int(time.time() - g.stat().st_mtime) if g.exists() else -1
     ago = "?" if age < 0 else f"{age}s" if age < 120 else f"{age // 60}m" if age < 7200 else f"{age // 3600}h"
     mode = cfg["mode"]
-    return (f"kasper {VERSION}\nmode: {mode} ({MODES[mode][0]})\nroot: {root}\n"
+    return (f"kasper {VERSION}\nmode: {mode}\nroot: {root}\n"
             f"graph: ready, {len(idx)} files, {ago} old, inject {len(inject(idx))}/{CAP} chars (full {g.stat().st_size if g.exists() else 0})\n"
             f"init: {'ok' if g.exists() and cfg.get('version') == VERSION else 'broken, run /kasper reinit'}")
 
@@ -210,8 +210,8 @@ def cmd(root, args):
         if m in MODES:
             cfg["mode"] = m
             (root / ".kasper" / "config.json").write_text(json.dumps(cfg, indent=1), encoding="utf-8")
-            return f"mode: {m} ({MODES[m][0]})\nComms: {MODES[m][1]}"
-        return f"mode: {cfg['mode']}\n" + "\n".join(f"{n} - {d}" for n, (d, _) in MODES.items()) + "\n/kasper mode <name|0-3>"
+            return f"mode: {m}\nComms: {MODES[m]}"
+        return f"mode: {cfg['mode']}\n" + " | ".join(MODES) + "\n/kasper mode <name|0-3>"
     if a in ("rebuild", "reinit") or rest[:1] == ["rebuild"]:
         if a == "reinit" and (root / ".git").exists():
             init_docs(root)
@@ -239,7 +239,7 @@ def session(root):
     if (root / ".git").exists():
         init_docs(root)
     idx, cfg = refresh(root)
-    print(RULES.format(v=VERSION, c=MODES[cfg["mode"]][1]) + "graph (path | symbol:line | imports):\n" + inject(idx))
+    print(RULES.format(v=VERSION, c=MODES[cfg["mode"]]) + "graph (path | symbol:line | imports):\n" + inject(idx))
 
 
 HTML = r"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>kasper graph</title>
