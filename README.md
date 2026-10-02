@@ -6,7 +6,7 @@
 
 A [Claude Code](https://claude.com/claude-code) plugin that makes the agent terse, keeps it from re-grepping your repo every turn, and lets it finish the whole job instead of stopping at function 50.
 
-![version](https://img.shields.io/badge/version-0.11.0-7cf5c8?style=flat-square)
+![version](https://img.shields.io/badge/version-0.12.0-7cf5c8?style=flat-square)
 ![languages](https://img.shields.io/badge/languages-any-7cf5c8?style=flat-square)
 ![deps](https://img.shields.io/badge/dependencies-0-7cf5c8?style=flat-square)
 
@@ -47,6 +47,31 @@ Same task, two sessions:
 ```
 
 Restart the session. Kasper turns itself on at every session start, no command needed.
+
+### Other CLIs
+
+Codex CLI, Gemini CLI, Qwen Code, Copilot CLI, Cursor CLI, Aider, OpenCode and Amp have no Claude Code plugin hooks, so Kasper writes its rules into the file each of them reads. Run in your repo:
+
+```
+python path/to/kasper/scripts/graph.py cmd sync            # detects installed CLIs
+python path/to/kasper/scripts/graph.py cmd sync codex gemini
+python path/to/kasper/scripts/graph.py cmd sync all
+```
+
+| CLI | file |
+|---|---|
+| Codex, OpenCode, Amp | `AGENTS.md` |
+| Gemini CLI | `GEMINI.md` |
+| Qwen Code | `QWEN.md` |
+| Copilot CLI | `.github/copilot-instructions.md` |
+| Cursor | `.cursor/rules/kasper.mdc` |
+| Aider | `CONVENTIONS.md` (start with `--read CONVENTIONS.md`) |
+
+- Kasper only owns the `<!-- kasper:start -->` ... `<!-- kasper:end -->` block. Your own text in those files is never touched, and `unsync` removes the block.
+- The block holds the compact rules and points to `.kasper/graph.md`. The graph itself is not pasted in, so these files stay small and don't churn in git.
+- `sync` copies the script to `.kasper/kasper.py`, so the agent can run `python .kasper/kasper.py cmd find <name>` and `python .kasper/kasper.py quiet` (refresh) itself.
+- Changing `mode` or `style` re-writes the synced blocks. There is no automatic graph refresh in these CLIs, the rules tell the agent to refresh after big changes.
+- Tested: the files get written, updated and cleaned up. How each CLI follows them is up to the CLI.
 
 ## Examples
 
@@ -136,12 +161,14 @@ Comments say why, not what.
 /kasper mode [m]         chatty | normal | quiet | mute   (or 0-3)
 /kasper style [on|off]   code/docs/commit style rules (default off)
 /kasper agentfiles keep|replace
+/kasper sync [names|all]  write the rules into other CLIs (see below)
+/kasper unsync           remove them
 /kasper help
 ```
 
 ```
 > /kasper
-kasper 0.11.0
+kasper 0.12.0
 mode: normal
 root: D:\projects\my-game
 graph: ready, 418 files, 3m old, inject 7.9k/8k chars

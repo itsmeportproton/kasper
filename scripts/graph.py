@@ -2,13 +2,14 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 CAP = 8000
 MAXSIZE = 1_000_000
 MAXLINES = 20000
@@ -24,14 +25,28 @@ ALIAS = {"0": "mute", "1": "quiet", "2": "normal", "3": "chatty"}
 
 RULES = """kasper {v}
 - Terse. No routine tool narration; speak when useful, blocked, or when a question saves work.
-- Materially ambiguous (product/API/arch)? Ask via the AskUserQuestion tool (1-4 questions, 2-4 options each, multiSelect when choices combine, recommended option first), not as chat text. Never guess or mass-read instead. Cheap facts: find them yourself.
+- Materially ambiguous (product/API/arch)? {q} Never guess or mass-read instead. Cheap facts: find them yourself.
 - Finish whole tasks; no stopping at arbitrary phase/count, no "continue?" when the next step is clear.
-- Navigate graph/search first, read only needed source; reread only if stale/partial. Graph is an index, verify in source.
+- {n}
 - Edit directly; no scratch/temp/patch scripts unless the task is the script. Batch independent calls.
 - Match repo language/style/tests; minimal scope, no unrelated refactors.
 - No fake ETA ("i dont have eta"). Final reply short: "done: <what>".
 Comms: {c}
 {s}"""
+
+ASK = "Ask via the AskUserQuestion tool (1-4 questions, 2-4 options each, multiSelect when choices combine, recommended option first), not as chat text."
+ASK_GENERIC = "Ask 1-4 short grouped questions with 2-4 labeled options each (recommended first), in one message."
+NAV = "Navigate graph/search first, read only needed source; reread only if stale/partial. Graph is an index, verify in source."
+NAV_GENERIC = ("Navigate: .kasper/graph.md (path | symbol:line | imports) is the repo index if present; query: python .kasper/kasper.py cmd find <name>; "
+               "after many file changes: python .kasper/kasper.py quiet. Search before mass reading; reread only if stale; verify in source.")
+TARGETS = {
+    "codex": "AGENTS.md", "opencode": "AGENTS.md", "amp": "AGENTS.md", "gemini": "GEMINI.md", "qwen": "QWEN.md",
+    "copilot": ".github/copilot-instructions.md", "cursor": ".cursor/rules/kasper.mdc", "aider": "CONVENTIONS.md",
+}
+BINS = {"codex": "codex", "opencode": "opencode", "amp": "amp", "gemini": "gemini", "qwen": "qwen",
+        "copilot": "copilot", "cursor": "cursor-agent", "aider": "aider"}
+BEGIN, END = "<!-- kasper:start -->", "<!-- kasper:end -->"
+FRONT = "---\nalwaysApply: true\n---\n"
 
 STYLE = """Style: comments only for intent/constraints/addresses. No summary .md unless asked. After the first skeleton write README.md (short, links) + docs/*.md, committed; agent files (CLAUDE.md AGENTS.md TODO.md PROJECT.md) are gitignored, never link them. Never echo diffs or commit text; commit only when asked, quietly (-q).
 """
@@ -45,6 +60,8 @@ HELP = """/kasper                  status panel
 /kasper mode [m]         chatty|normal|quiet|mute (0-3)
 /kasper style [on|off]   code/docs/commit style rules (default off)
 /kasper agentfiles keep|replace   how to treat existing CLAUDE.md/AGENTS.md/...
+/kasper sync [names|all]  write kasper rules into other CLIs (codex gemini qwen copilot cursor aider opencode amp)
+/kasper unsync           remove them
 /kasper help"""
 
 LANG = {
@@ -225,6 +242,54 @@ def find(idx, q):
     return f"{len(hits)} matches\n" + "\n".join(f"{f} | {' '.join(s[:6])} | used by {n.get(f, 0)}" for _, f, s in hits[:15])
 
 
+def block(cfg):
+    rules = RULES.format(v=VERSION, q=ASK_GENERIC, n=NAV_GENERIC, c=MODES[cfg["mode"]], s=STYLE if cfg.get("style") else "")
+    return f"{BEGIN}\n{rules}{END}\n"
+
+
+def managed(text):
+    return re.compile(re.escape(BEGIN) + ".*?" + re.escape(END) + "\n?", re.S)
+
+
+def sync(root, cfg, names):
+    """Write a managed kasper block into the instruction files of other CLIs."""
+    k = root / ".kasper"
+    k.mkdir(exist_ok=True)
+    dst = k / "kasper.py"
+    if not dst.exists() or not os.path.samefile(__file__, dst):
+        shutil.copyfile(__file__, dst)
+    done = []
+    for rel in sorted({TARGETS[n] for n in names}):
+        f = root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        text = f.read_text(encoding="utf-8") if f.exists() else (FRONT if rel.endswith(".mdc") else "")
+        if BEGIN in text and END in text:
+            text = managed(text).sub(lambda m: block(cfg), text)
+        else:
+            text = text.rstrip("\n") + ("\n\n" if text.strip() else "") + block(cfg)
+        f.write_text(text, encoding="utf-8")
+        done.append(rel)
+    cfg["sync"] = sorted(set(names))
+    save_cfg(root, cfg)
+    return done
+
+
+def unsync(root, cfg):
+    gone = []
+    for rel in sorted(set(TARGETS.values())):
+        f = root / rel
+        if f.exists() and BEGIN in f.read_text(encoding="utf-8"):
+            text = managed("").sub("", f.read_text(encoding="utf-8")).rstrip("\n")
+            if text.replace(FRONT.rstrip("\n"), "").strip():
+                f.write_text(text + "\n", encoding="utf-8")
+            else:
+                f.unlink()
+            gone.append(rel)
+    cfg.pop("sync", None)
+    save_cfg(root, cfg)
+    return gone
+
+
 def agent_files(root, cfg):
     """Create+ignore kasper's agent files, but never touch foreign ones without the user's decision."""
     mode = cfg.get("agentfiles")
@@ -296,6 +361,8 @@ def cmd(root, args):
         if m in MODES:
             cfg["mode"] = m
             save_cfg(root, cfg)
+            if cfg.get("sync"):
+                sync(root, cfg, cfg["sync"])
             return f"mode: {m}\nComms: {MODES[m]}"
         return f"mode: {cfg['mode']}\n" + " | ".join(MODES) + "\n/kasper mode <name|0-3>"
     if a == "style":
@@ -303,6 +370,8 @@ def cmd(root, args):
         if rest[:1] in (["on"], ["off"]):
             cfg["style"] = rest[0] == "on"
             save_cfg(root, cfg)
+            if cfg.get("sync"):
+                sync(root, cfg, cfg["sync"])
         return f"style: {'on' if cfg.get('style') else 'off'}" + (f"\n{STYLE}" if cfg.get("style") and rest else "")
     if a == "agentfiles":
         idx, cfg = refresh(root)
@@ -311,6 +380,15 @@ def cmd(root, args):
         cfg["agentfiles"] = rest[0]
         save_cfg(root, cfg)
         return f"agentfiles: {rest[0]}" + (agent_files(root, cfg) or "")
+    if a == "sync":
+        idx, cfg = refresh(root)
+        names = list(TARGETS) if rest[:1] == ["all"] else [n for n in rest if n in TARGETS] or [n for n, b in BINS.items() if shutil.which(b)]
+        if not names:
+            return "no other CLI found; pass names: " + " ".join(TARGETS)
+        return "synced: " + " ".join(sync(root, cfg, names))
+    if a == "unsync":
+        idx, cfg = refresh(root)
+        return "removed from: " + (" ".join(unsync(root, cfg)) or "nothing")
     if a == "find":
         idx, cfg = refresh(root)
         return find(idx, " ".join(rest)) if rest else "/kasper find <query>"
@@ -339,7 +417,7 @@ def cmd(root, args):
 def session(root):
     idx, cfg = refresh(root)
     note = agent_files(root, cfg)
-    rules = RULES.format(v=VERSION, c=MODES[cfg["mode"]], s=STYLE if cfg.get("style") else "")
+    rules = RULES.format(v=VERSION, q=ASK, n=NAV, c=MODES[cfg["mode"]], s=STYLE if cfg.get("style") else "")
     print(rules + note + "graph (path | symbol:line | imports):\n" + inject(idx))
 
 
