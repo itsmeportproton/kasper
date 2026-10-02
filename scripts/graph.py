@@ -8,8 +8,11 @@ import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "0.10.4"
+VERSION = "0.11.0"
 CAP = 8000
+MAXSIZE = 1_000_000
+MAXLINES = 20000
+AGENT = ["CLAUDE.md", "AGENTS.md", "TODO.md", "PROJECT.md"]
 
 MODES = {
     "chatty": "concise useful commentary allowed; never narrate routine tool calls.",
@@ -25,18 +28,23 @@ RULES = """kasper {v}
 - Finish whole tasks; no stopping at arbitrary phase/count, no "continue?" when the next step is clear.
 - Navigate graph/search first, read only needed source; reread only if stale/partial. Graph is an index, verify in source.
 - Edit directly; no scratch/temp/patch scripts unless the task is the script. Batch independent calls.
-- Match repo language/style/tests; minimal scope, no unrelated refactors. Comments only for intent/constraints/addresses.
-- No fake ETA ("i dont have eta"). No summary .md files unless asked. CLAUDE.md AGENTS.md TODO.md PROJECT.md are gitignored agent files; real docs go to README.md (short, links) + docs/*.md, committed, after the first skeleton.
-- Final reply short: "done: <what>". Never echo diffs or commit text; commit only when asked, quietly (-q).
+- Match repo language/style/tests; minimal scope, no unrelated refactors.
+- No fake ETA ("i dont have eta"). Final reply short: "done: <what>".
 Comms: {c}
+{s}"""
+
+STYLE = """Style: comments only for intent/constraints/addresses. No summary .md unless asked. After the first skeleton write README.md (short, links) + docs/*.md, committed; agent files (CLAUDE.md AGENTS.md TODO.md PROJECT.md) are gitignored, never link them. Never echo diffs or commit text; commit only when asked, quietly (-q).
 """
 
-HELP = """/kasper             status panel
-/kasper status      details
-/kasper graph       open html map (graph rebuild: force)
-/kasper rebuild     force graph rebuild
-/kasper reinit      re-detect repo, rebuild all
-/kasper mode [m]    chatty|normal|quiet|mute (0-3)
+HELP = """/kasper                  status panel
+/kasper status           details
+/kasper find <query>     ranked hits from the graph (path | symbols | used-by)
+/kasper graph            open html map (graph rebuild: force)
+/kasper rebuild          force graph rebuild
+/kasper reinit           re-detect repo, rebuild all
+/kasper mode [m]         chatty|normal|quiet|mute (0-3)
+/kasper style [on|off]   code/docs/commit style rules (default off)
+/kasper agentfiles keep|replace   how to treat existing CLAUDE.md/AGENTS.md/...
 /kasper help"""
 
 LANG = {
@@ -90,10 +98,14 @@ def list_files(root):
 
 
 def scan(path, ext):
-    if ext not in LANG or ext in NOSCAN:
+    if ext not in LANG or ext in NOSCAN or ".min." in path.name:
+        return [], []
+    text = path.read_text(errors="ignore")
+    lines = text.splitlines()
+    if len(text) > MAXSIZE or len(lines) > MAXLINES or len(text) > 500 * max(1, len(lines)):
         return [], []
     syms, imps = [], []
-    for n, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
+    for n, line in enumerate(lines, 1):
         m = SYM.match(line) or (ext in CFAMILY and not line.startswith("#") and CFUNC.match(line))
         if m and m[1] not in NOTFUNC:
             syms.append(f"{m[1].rstrip(':.')}:{n}")
@@ -128,38 +140,112 @@ def refresh(root, force=False):
         (k / "graph.md").write_text(graph_text(idx), encoding="utf-8")
     cfg.update(version=VERSION, root=str(root), files=len(idx))
     cfg.setdefault("mode", "normal")
-    (k / "config.json").write_text(json.dumps(cfg, indent=1), encoding="utf-8")
+    save_cfg(root, cfg)
     return idx, cfg
+
+
+def save_cfg(root, cfg):
+    (root / ".kasper" / "config.json").write_text(json.dumps(cfg, indent=1), encoding="utf-8")
+
+
+def refresh_one(root, p):
+    """Update a single index entry after an edit. False = needs a full refresh."""
+    k = root / ".kasper"
+    idx = load_json(k / "index.json", None)
+    if idx is None or load_json(k / "config.json", {}).get("version") != VERSION:
+        return False
+    try:
+        rel = Path(p).resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return True
+    ext = Path(rel).suffix.lower()
+    if SKIP & set(rel.split("/")) or ext in BIN:
+        return True
+    f = root / rel
+    if f.is_file():
+        if rel not in idx and (root / ".git").exists() and subprocess.run(["git", "check-ignore", "-q", rel], cwd=root).returncode == 0:
+            return True
+        st = f.stat()
+        idx[rel] = [st.st_mtime_ns, st.st_size, *scan(f, ext)]
+        idx = dict(sorted(idx.items()))
+    elif rel in idx:
+        del idx[rel]
+    else:
+        return True
+    (k / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+    (k / "graph.md").write_text(graph_text(idx), encoding="utf-8")
+    return True
 
 
 def graph_text(idx):
     return "\n".join(f"{f} | {' '.join(v[2][:200])} | {' '.join(v[3])}" if v[2] or v[3] else f for f, v in idx.items())
 
 
+def indegree(idx):
+    n = {}
+    for d in resolve(idx).values():
+        for x in d:
+            n[x] = n.get(x, 0) + 1
+    return n
+
+
 def inject(idx):
     full = graph_text(idx)
     if len(full) <= CAP:
         return full
+    top = sorted(((n, f) for f, n in indegree(idx).items()), reverse=True)[:15]
+    head = (f"graph: {len(idx)} files; truncated; full: .kasper/graph.md; query: python \"{Path(__file__).resolve()}\" cmd find <name>\n"
+            + ("most imported: " + " ".join(f"{f}({n})" for n, f in top) + "\n" if top else ""))
     for depth in (3, 2, 1):
         dirs = {}
         for f in idx:
             d = "/".join(f.split("/")[:-1][:depth]) or "."
             dirs.setdefault(d, []).append(Path(f).suffix.lower())
         body = "\n".join(f"{d}/ {len(e)}" for d, e in sorted(dirs.items()))
-        if len(body) <= CAP - 80:
+        if len(head) + len(body) <= CAP:
             break
-    return f"graph: {len(idx)} files; truncated; full: .kasper/graph.md\n" + body[:CAP - 80]
+    return (head + body)[:CAP]
 
 
-def init_docs(root):
-    agent = ["CLAUDE.md", "AGENTS.md", "TODO.md", "PROJECT.md"]
-    for name in agent:
-        (root / name).touch()
+def find(idx, q):
+    words = q.lower().split()
+    n = indegree(idx)
+    hits = []
+    for f, v in idx.items():
+        low = f.lower()
+        syms = [s for s in v[2] if any(w in s.lower() for w in words)]
+        if not all(w in low or any(w in s.lower() for s in v[2]) for w in words):
+            continue
+        name = Path(f).name.lower()
+        score = sum(3 if w in name else 1 for w in words if w in low) + 2 * min(len(syms), 3) + 0.2 * min(n.get(f, 0), 10)
+        hits.append((score, f, syms))
+    hits.sort(key=lambda h: -h[0])
+    if not hits:
+        return "no match in graph; grep"
+    return f"{len(hits)} matches\n" + "\n".join(f"{f} | {' '.join(s[:6])} | used by {n.get(f, 0)}" for _, f, s in hits[:15])
+
+
+def agent_files(root, cfg):
+    """Create+ignore kasper's agent files, but never touch foreign ones without the user's decision."""
+    mode = cfg.get("agentfiles")
+    if not (root / ".git").exists() or mode == "keep":
+        return ""
+    created = cfg.setdefault("created", [])
+    foreign = [n for n in AGENT if (root / n).exists() and n not in created]
+    if foreign and mode != "replace":
+        return (f"kasper: found existing {' '.join(foreign)}. Ask the user via AskUserQuestion: let kasper manage them "
+                f"(add to .gitignore, content untouched) or keep as is? Then run: python \"{Path(__file__).resolve()}\" cmd agentfiles replace|keep\n")
+    for n in AGENT:
+        if not (root / n).exists():
+            (root / n).touch()
+            created.append(n)
     gi = root / ".gitignore"
     have = gi.read_text().splitlines() if gi.exists() else []
-    new = [p for p in agent + [".kasper/"] if p not in have]
+    new = [p for p in AGENT + [".kasper/"] if p not in have]
     if new:
         gi.write_text("\n".join(have + new) + "\n")
+    save_cfg(root, cfg)
+    return ""
 
 
 def resolve(idx):
@@ -196,7 +282,7 @@ def status(root, idx, cfg):
     age = int(time.time() - g.stat().st_mtime) if g.exists() else -1
     ago = "?" if age < 0 else f"{age}s" if age < 120 else f"{age // 60}m" if age < 7200 else f"{age // 3600}h"
     mode = cfg["mode"]
-    return (f"kasper {VERSION}\nmode: {mode}\nroot: {root}\n"
+    return (f"kasper {VERSION}\nmode: {mode}, style: {'on' if cfg.get('style') else 'off'}\nroot: {root}\n"
             f"graph: ready, {len(idx)} files, {ago} old, inject {len(inject(idx))}/{CAP} chars (full {g.stat().st_size if g.exists() else 0})\n"
             f"init: {'ok' if g.exists() and cfg.get('version') == VERSION else 'broken, run /kasper reinit'}")
 
@@ -209,14 +295,29 @@ def cmd(root, args):
         m = ALIAS.get(rest[0], rest[0]) if rest else ""
         if m in MODES:
             cfg["mode"] = m
-            (root / ".kasper" / "config.json").write_text(json.dumps(cfg, indent=1), encoding="utf-8")
+            save_cfg(root, cfg)
             return f"mode: {m}\nComms: {MODES[m]}"
         return f"mode: {cfg['mode']}\n" + " | ".join(MODES) + "\n/kasper mode <name|0-3>"
+    if a == "style":
+        idx, cfg = refresh(root)
+        if rest[:1] in (["on"], ["off"]):
+            cfg["style"] = rest[0] == "on"
+            save_cfg(root, cfg)
+        return f"style: {'on' if cfg.get('style') else 'off'}" + (f"\n{STYLE}" if cfg.get("style") and rest else "")
+    if a == "agentfiles":
+        idx, cfg = refresh(root)
+        if rest[:1] not in (["keep"], ["replace"]):
+            return f"agentfiles: {cfg.get('agentfiles', 'undecided')}\n/kasper agentfiles keep|replace"
+        cfg["agentfiles"] = rest[0]
+        save_cfg(root, cfg)
+        return f"agentfiles: {rest[0]}" + (agent_files(root, cfg) or "")
+    if a == "find":
+        idx, cfg = refresh(root)
+        return find(idx, " ".join(rest)) if rest else "/kasper find <query>"
     if a in ("rebuild", "reinit") or rest[:1] == ["rebuild"]:
-        if a == "reinit" and (root / ".git").exists():
-            init_docs(root)
         idx, cfg = refresh(root, force=True)
         if a == "reinit":
+            agent_files(root, cfg)
             build_html(root, idx)
         return f"{a}: {len(idx)} files"
     if a == "graph":
@@ -232,14 +333,14 @@ def cmd(root, args):
         return HELP
     if a == "status":
         return status(root, idx, cfg)
-    return status(root, idx, cfg).split("\ninit:")[0] + "\ncommands: status | graph | rebuild | mode | reinit | help"
+    return status(root, idx, cfg).split("\ninit:")[0] + "\ncommands: status | find | graph | rebuild | mode | style | agentfiles | reinit | help"
 
 
 def session(root):
-    if (root / ".git").exists():
-        init_docs(root)
     idx, cfg = refresh(root)
-    print(RULES.format(v=VERSION, c=MODES[cfg["mode"]]) + "graph (path | symbol:line | imports):\n" + inject(idx))
+    note = agent_files(root, cfg)
+    rules = RULES.format(v=VERSION, c=MODES[cfg["mode"]], s=STYLE if cfg.get("style") else "")
+    print(rules + note + "graph (path | symbol:line | imports):\n" + inject(idx))
 
 
 HTML = r"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>kasper graph</title>
@@ -310,6 +411,11 @@ if __name__ == "__main__":
     if mode == "cmd":
         print(cmd(root, sys.argv[2:]))
     elif mode == "quiet":
-        refresh(root)
+        try:
+            path = json.loads(sys.stdin.read())["tool_input"]["file_path"]
+        except Exception:
+            path = None
+        if not (path and refresh_one(root, path)):
+            refresh(root)
     else:
         session(root)

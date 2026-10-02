@@ -6,7 +6,7 @@
 
 A [Claude Code](https://claude.com/claude-code) plugin that makes the agent terse, keeps it from re-grepping your repo every turn, and lets it finish the whole job instead of stopping at function 50.
 
-![version](https://img.shields.io/badge/version-0.10.4-7cf5c8?style=flat-square)
+![version](https://img.shields.io/badge/version-0.11.0-7cf5c8?style=flat-square)
 ![languages](https://img.shields.io/badge/languages-any-7cf5c8?style=flat-square)
 ![deps](https://img.shields.io/badge/dependencies-0-7cf5c8?style=flat-square)
 
@@ -127,18 +127,21 @@ Comments say why, not what.
 ## Commands
 
 ```
-/kasper             status panel
-/kasper status      version, mode, graph size/age, init state
-/kasper graph       open the html repo map
-/kasper rebuild     force a graph rebuild
-/kasper reinit      re-detect the repo, rebuild everything
-/kasper mode [m]    chatty | normal | quiet | mute   (or 0-3)
+/kasper                  status panel
+/kasper status           version, mode, graph size/age, init state
+/kasper find <query>     ranked hits from the graph (path | symbols | used-by)
+/kasper graph            open the html repo map
+/kasper rebuild          force a graph rebuild
+/kasper reinit           re-detect the repo, rebuild everything
+/kasper mode [m]         chatty | normal | quiet | mute   (or 0-3)
+/kasper style [on|off]   code/docs/commit style rules (default off)
+/kasper agentfiles keep|replace
 /kasper help
 ```
 
 ```
 > /kasper
-kasper 0.10.4
+kasper 0.11.0
 mode: normal
 root: D:\projects\my-game
 graph: ready, 418 files, 3m old, inject 7.9k/8k chars
@@ -172,18 +175,21 @@ src/render/gl.cpp | InitGL:8 DrawFrame:41 | core/patcher.h
 ```
 
 - Respects `.gitignore` (uses `git ls-files`, falls back to a directory walk).
+- After an edit only that file's entry is updated (the hook gets the path from Claude Code), no repo-wide rescan.
+- Skips huge, generated and minified files (over 1 MB, 20k lines, or very long lines): they stay in the tree, without symbols.
 - Symbols and imports are extracted for the common languages. For everything else you still get the file tree.
-- If the graph is over 8k chars, only a per-directory summary is injected; the full file stays on disk.
+- If the graph is over 8k chars, the injected part is the most-imported files plus a per-directory summary; the full file stays on disk.
+- On big repos the agent queries instead of reading everything: `/kasper find auth` returns up to 15 ranked hits (name and symbol match, boosted by how many files import it).
 - The graph is an index. The agent verifies in the source.
 
 Open `/kasper graph` for a small repo map: collapsible tree, search by path, symbol or language (`/` focuses, `Esc` clears), language filters, and a side panel that lists what a file depends on and what imports it. About 6 KB of vanilla HTML/JS, dark and light themes.
 
-## Files
+## Files and style
 
-Kasper keeps agent-only files out of git and real documentation in it:
+Kasper's core rules cover communication, navigation and execution only. The rest is opt-in:
 
-- gitignored: `CLAUDE.md`, `AGENTS.md`, `TODO.md`, `PROJECT.md`, `.kasper/`
-- committed: `README.md` (short, with links) and `docs/*.md` (one file per implementation topic)
+- `/kasper style on` adds: comments only for intent/constraints, no summary `.md`, real docs go to `README.md` (short, with links) + `docs/*.md` (committed), no diff/commit text in replies.
+- Agent files `CLAUDE.md`, `AGENTS.md`, `TODO.md`, `PROJECT.md`: if none exist, Kasper creates empty ones and adds them to `.gitignore`. If some already exist, it never touches them; the agent asks you (`AskUserQuestion`) whether Kasper should manage them (gitignore only, content untouched) or leave them alone. The answer is saved by `/kasper agentfiles keep|replace`.
 
 ## Layout
 
