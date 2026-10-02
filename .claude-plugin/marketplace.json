@@ -1,0 +1,5 @@
+{
+  "name": "kasper",
+  "owner": {"name": "itsmeportproton"},
+  "plugins": [{"name": "kasper", "source": "./", "description": "Terse answers + prebuilt code graph."}]
+}
