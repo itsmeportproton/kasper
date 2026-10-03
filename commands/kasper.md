@@ -1,6 +1,6 @@
 ---
-description: kasper status | graph | rebuild | reinit | mode | setup | help
-argument-hint: [status|graph|rebuild|reinit|mode <name>|setup|help]
+description: kasper status | graph | rebuild | reinit | mode | setup | context | help
+argument-hint: [status|graph|rebuild|reinit|mode <name>|setup|context|help]
 allowed-tools: Bash(python:*)
 ---
 !`python "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" cmd $ARGUMENTS`

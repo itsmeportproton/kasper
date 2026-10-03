@@ -9,7 +9,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "0.14.0"
+VERSION = "0.15.0"
 CAP = 8000
 MAXSIZE = 1_000_000
 MAXLINES = 20000
@@ -60,6 +60,7 @@ HELP = """/kasper                  status panel
 /kasper mode [m]         chatty|normal|quiet|mute (0-3)
 /kasper style [on|off]   code/docs/commit style rules (default off)
 /kasper agentfiles keep|replace   how to treat existing CLAUDE.md/TODO.md/...
+/kasper context          context window usage (from statusline)
 /kasper help"""
 
 LANG = {
@@ -271,10 +272,14 @@ def setup(root, cfg, kv):
             st.pop("autoCompactWindow", None)
         msg.append(f"autocompact: {kv['compact']}")
     if kv.get("statusline") == "on":
-        if "statusLine" in st or "statusLine" in load_json(Path.home() / ".claude" / "settings.json", {}):
+        dst = Path.home() / ".claude" / "kasper" / "statusline.py"
+        cur = str((st.get("statusLine") or load_json(Path.home() / ".claude" / "settings.json", {}).get("statusLine") or {}).get("command", ""))
+        if cur and str(dst) in cur:
+            shutil.copyfile(Path(__file__).with_name("statusline.py"), dst)
+            msg.append("statusline: updated")
+        elif cur:
             msg.append("statusline: kept existing")
         else:
-            dst = Path.home() / ".claude" / "kasper" / "statusline.py"
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(Path(__file__).with_name("statusline.py"), dst)
             st["statusLine"] = {"type": "command", "command": f'python "{dst}"'}
@@ -354,6 +359,17 @@ def status(root, idx, cfg):
 def cmd(root, args):
     a = args[0] if args else ""
     rest = args[1:]
+    if a == "context":
+        d = load_json(Path.home() / ".claude" / "kasper" / "last.json", {}).get("context_window") or {}
+        size, pct = d.get("context_window_size"), d.get("used_percentage")
+        if not size or pct is None:
+            return "context: no data yet (needs the kasper statusline). Full breakdown: /context"
+        used = size * pct / 100
+        free = size - used
+        bar = lambda p: "█" * round(p / 5) + "░" * (20 - round(p / 5))
+        return (f"Context window  {used / 1e3:.1f}k / {size / 1e3:.0f}k ({pct:.0f}%)\n"
+                f"Used        {bar(pct)} {pct:.1f}%\nFree space  {bar(100 - pct)} {100 - pct:.1f}% ({free / 1e3:.1f}k)\n"
+                "Per-category (Messages, tools, MCP, skills, memory): /context")
     if a == "mode":
         idx, cfg = refresh(root)
         m = ALIAS.get(rest[0], rest[0]) if rest else ""

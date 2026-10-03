@@ -6,7 +6,7 @@
 
 A [Claude Code](https://claude.com/claude-code) plugin that makes the agent terse, keeps it from re-grepping your repo every turn, and lets it finish the whole job instead of stopping at function 50.
 
-![version](https://img.shields.io/badge/version-0.14.0-7cf5c8?style=flat-square)
+![version](https://img.shields.io/badge/version-0.15.0-7cf5c8?style=flat-square)
 ![languages](https://img.shields.io/badge/languages-any-7cf5c8?style=flat-square)
 ![deps](https://img.shields.io/badge/dependencies-0-7cf5c8?style=flat-square)
 
@@ -165,7 +165,7 @@ Comments say why, not what.
 
 ```
 > /kasper
-kasper 0.14.0
+kasper 0.15.0
 mode: normal, style: off
 root: D:\projects\my-game
 graph: ready, 418 files, 3m old, inject 7.9k/8k chars
