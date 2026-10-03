@@ -6,7 +6,7 @@
 
 A [Claude Code](https://claude.com/claude-code) plugin that makes the agent terse, keeps it from re-grepping your repo every turn, and lets it finish the whole job instead of stopping at function 50.
 
-![version](https://img.shields.io/badge/version-0.13.0-7cf5c8?style=flat-square)
+![version](https://img.shields.io/badge/version-0.14.0-7cf5c8?style=flat-square)
 ![languages](https://img.shields.io/badge/languages-any-7cf5c8?style=flat-square)
 ![deps](https://img.shields.io/badge/dependencies-0-7cf5c8?style=flat-square)
 
@@ -70,6 +70,17 @@ If `gh` is not logged in, Kasper says so; run `! gh auth login` yourself, it is 
 ### Statusline
 
 A plugin cannot ship a statusline, so `setup` copies `scripts/statusline.py` to `~/.claude/kasper/statusline.py` and points `statusLine` at it in the project's `.claude/settings.local.json`. An existing `statusLine` (project or user) is never replaced. It reads the 5-hour and weekly `rate_limits` plus context usage that Claude Code passes on stdin; segments that are missing (non-subscription accounts) are omitted.
+
+### Codex CLI
+
+The repo also ships a Codex plugin (`.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `skills/kasper`).
+
+```
+codex plugin marketplace add itsmeportproton/kasper
+codex plugin install kasper@kasper     # or install from the plugin browser
+```
+
+Restart Codex, then use `$kasper status`, `$kasper find <name>`, `$kasper setup`. The first session also installs `~/.codex/kasper/graph.py` and the `/prompts:kasper <args>` slash command. Plugin hooks (SessionStart rules + graph, PostToolUse refresh) are declared in the manifest; if your Codex build doesn't run them, `$kasper sync codex` writes the rules into `AGENTS.md` instead. Codex ignores `subagents`, `compact` and `statusline` from setup; `mode` and `git` apply.
 
 ### Other CLIs
 
@@ -192,7 +203,7 @@ Comments say why, not what.
 
 ```
 > /kasper
-kasper 0.13.0
+kasper 0.14.0
 mode: normal, style: off
 root: D:\projects\my-game
 graph: ready, 418 files, 3m old, inject 7.9k/8k chars
