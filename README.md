@@ -6,7 +6,7 @@
 
 A [Claude Code](https://claude.com/claude-code) plugin that makes the agent terse, keeps it from re-grepping your repo every turn, and lets it finish the whole job instead of stopping at function 50.
 
-![version](https://img.shields.io/badge/version-0.12.0-7cf5c8?style=flat-square)
+![version](https://img.shields.io/badge/version-0.13.0-7cf5c8?style=flat-square)
 ![languages](https://img.shields.io/badge/languages-any-7cf5c8?style=flat-square)
 ![deps](https://img.shields.io/badge/dependencies-0-7cf5c8?style=flat-square)
 
@@ -37,6 +37,8 @@ Same task, two sessions:
 | **Marathon** | Big plan or 200 similar functions: runs through, no "continue?". |
 | **Direct edits** | No `patch.py` / temp scripts that paste code into files. |
 | **Language agnostic** | Python, JS/TS, Lua, C/C++, Rust, Go, Java, C#, ... and for anything unknown it still maps the file tree. |
+| **Usage bar** | Optional statusline under the input: `5h ███████░░░░░ 62% · 7d ██░░░░░░░░░░ 18% · ctx 34%`. |
+| **One-time setup** | First session asks mode, git, subagent cap and autocompact once; the answers apply to every later project. |
 | **Cheap** | About 1.2k chars of rules and at most 8k chars of graph per session. |
 
 ## Install
@@ -47,6 +49,27 @@ Same task, two sessions:
 ```
 
 Restart the session. Kasper turns itself on at every session start, no command needed.
+
+Update: `claude plugin marketplace update kasper`, then `claude plugin uninstall kasper@kasper` and `claude plugin install kasper@kasper`, and restart.
+
+## Setup
+
+The first session in a project (with no saved setup) the agent asks four questions in one `AskUserQuestion`:
+
+| question | options | effect |
+|---|---|---|
+| comms mode | quiet / normal / chatty / mute (0-3) | `.kasper/config.json` |
+| git | commit after each task + push / init + commit only / off | runs `git init` if needed; with `auto` the rules tell the agent to `commit -q` after each task and `push -q` if an origin exists |
+| max concurrent subagents | 2 / 1 / custom | `env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (restart to apply) |
+| autocompact window | 350k / 200k / off | `autoCompactWindow` |
+
+Plus the usage-bar statusline (below). Project settings go to `.claude/settings.local.json`, merged into whatever is there. The answers are also saved to `~/.claude/kasper/defaults.json` and applied silently to every new project. Re-run with `/kasper setup`, or apply directly: `/kasper setup mode=quiet git=auto subagents=2 compact=350000 statusline=on`.
+
+If `gh` is not logged in, Kasper says so; run `! gh auth login` yourself, it is interactive.
+
+### Statusline
+
+A plugin cannot ship a statusline, so `setup` copies `scripts/statusline.py` to `~/.claude/kasper/statusline.py` and points `statusLine` at it in the project's `.claude/settings.local.json`. An existing `statusLine` (project or user) is never replaced. It reads the 5-hour and weekly `rate_limits` plus context usage that Claude Code passes on stdin; segments that are missing (non-subscription accounts) are omitted.
 
 ### Other CLIs
 
@@ -160,6 +183,7 @@ Comments say why, not what.
 /kasper reinit           re-detect the repo, rebuild everything
 /kasper mode [m]         chatty | normal | quiet | mute   (or 0-3)
 /kasper style [on|off]   code/docs/commit style rules (default off)
+/kasper setup [k=v ...]  first-run wizard; or apply mode git subagents compact statusline
 /kasper agentfiles keep|replace
 /kasper sync [names|all]  write the rules into other CLIs (see below)
 /kasper unsync           remove them
@@ -168,11 +192,11 @@ Comments say why, not what.
 
 ```
 > /kasper
-kasper 0.12.0
-mode: normal
+kasper 0.13.0
+mode: normal, style: off
 root: D:\projects\my-game
 graph: ready, 418 files, 3m old, inject 7.9k/8k chars
-commands: status | graph | rebuild | mode | reinit | help
+commands: status | find | graph | rebuild | mode | style | agentfiles | reinit | help
 ```
 
 ## Modes
@@ -184,7 +208,7 @@ commands: status | graph | rebuild | mode | reinit | help
 | `quiet` | questions, blockers and the final line only |
 | `mute` | silent unless it cannot continue without an answer |
 
-The mode is saved per repository in `.kasper/config.json`. Only the active mode's one-line rule goes into the context.
+The mode is saved per repository in `.kasper/config.json` (the default for new repos comes from `/kasper setup`). Only the active mode's one-line rule goes into the context.
 
 ## The graph
 
@@ -224,7 +248,8 @@ Kasper's core rules cover communication, navigation and execution only. The rest
 .claude-plugin/   plugin.json, marketplace.json
 hooks/hooks.json  SessionStart -> init + inject, PostToolUse(Edit|Write) -> refresh graph
 commands/kasper.md
-scripts/graph.py  the whole thing, python 3.8+ stdlib only
+scripts/graph.py  graph, commands, setup; python 3.8+ stdlib only
+scripts/statusline.py  usage-bar statusline (installed by setup)
 ```
 
 ## Not included
