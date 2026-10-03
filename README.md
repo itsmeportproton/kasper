@@ -71,42 +71,6 @@ If `gh` is not logged in, Kasper says so; run `! gh auth login` yourself, it is 
 
 A plugin cannot ship a statusline, so `setup` copies `scripts/statusline.py` to `~/.claude/kasper/statusline.py` and points `statusLine` at it in the project's `.claude/settings.local.json`. An existing `statusLine` (project or user) is never replaced. It reads the 5-hour and weekly `rate_limits` plus context usage that Claude Code passes on stdin; segments that are missing (non-subscription accounts) are omitted.
 
-### Codex CLI
-
-The repo also ships a Codex plugin (`.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `skills/kasper`).
-
-```
-codex plugin marketplace add itsmeportproton/kasper
-codex plugin install kasper@kasper     # or install from the plugin browser
-```
-
-Restart Codex, then use `$kasper status`, `$kasper find <name>`, `$kasper setup`. The first session also installs `~/.codex/kasper/graph.py` and the `/prompts:kasper <args>` slash command. Plugin hooks (SessionStart rules + graph, PostToolUse refresh) are declared in the manifest; if your Codex build doesn't run them, `$kasper sync codex` writes the rules into `AGENTS.md` instead. Codex ignores `subagents`, `compact` and `statusline` from setup; `mode` and `git` apply.
-
-### Other CLIs
-
-Codex CLI, Gemini CLI, Qwen Code, Copilot CLI, Cursor CLI, Aider, OpenCode and Amp have no Claude Code plugin hooks, so Kasper writes its rules into the file each of them reads. Run in your repo:
-
-```
-python path/to/kasper/scripts/graph.py cmd sync            # detects installed CLIs
-python path/to/kasper/scripts/graph.py cmd sync codex gemini
-python path/to/kasper/scripts/graph.py cmd sync all
-```
-
-| CLI | file |
-|---|---|
-| Codex, OpenCode, Amp | `AGENTS.md` |
-| Gemini CLI | `GEMINI.md` |
-| Qwen Code | `QWEN.md` |
-| Copilot CLI | `.github/copilot-instructions.md` |
-| Cursor | `.cursor/rules/kasper.mdc` |
-| Aider | `CONVENTIONS.md` (start with `--read CONVENTIONS.md`) |
-
-- Kasper only owns the `<!-- kasper:start -->` ... `<!-- kasper:end -->` block. Your own text in those files is never touched, and `unsync` removes the block.
-- The block holds the compact rules and points to `.kasper/graph.md`. The graph itself is not pasted in, so these files stay small and don't churn in git.
-- `sync` copies the script to `.kasper/kasper.py`, so the agent can run `python .kasper/kasper.py cmd find <name>` and `python .kasper/kasper.py quiet` (refresh) itself.
-- Changing `mode` or `style` re-writes the synced blocks. There is no automatic graph refresh in these CLIs, the rules tell the agent to refresh after big changes.
-- Tested: the files get written, updated and cleaned up. How each CLI follows them is up to the CLI.
-
 ## Examples
 
 **Clear task**
@@ -196,8 +160,6 @@ Comments say why, not what.
 /kasper style [on|off]   code/docs/commit style rules (default off)
 /kasper setup [k=v ...]  first-run wizard; or apply mode git subagents compact statusline
 /kasper agentfiles keep|replace
-/kasper sync [names|all]  write the rules into other CLIs (see below)
-/kasper unsync           remove them
 /kasper help
 ```
 
@@ -251,7 +213,7 @@ Open `/kasper graph` for a small repo map: collapsible tree, search by path, sym
 Kasper's core rules cover communication, navigation and execution only. The rest is opt-in:
 
 - `/kasper style on` adds: comments only for intent/constraints, no summary `.md`, real docs go to `README.md` (short, with links) + `docs/*.md` (committed), no diff/commit text in replies.
-- Agent files `CLAUDE.md`, `AGENTS.md`, `TODO.md`, `PROJECT.md`: if none exist, Kasper creates empty ones and adds them to `.gitignore`. If some already exist, it never touches them; the agent asks you (`AskUserQuestion`) whether Kasper should manage them (gitignore only, content untouched) or leave them alone. The answer is saved by `/kasper agentfiles keep|replace`.
+- Agent files `CLAUDE.md`, `TODO.md`, `PROJECT.md`: if none exist, Kasper creates empty ones and adds them to `.gitignore`. If some already exist, it never touches them; the agent asks you (`AskUserQuestion`) whether Kasper should manage them (gitignore only, content untouched) or leave them alone. The answer is saved by `/kasper agentfiles keep|replace`.
 
 ## Layout
 

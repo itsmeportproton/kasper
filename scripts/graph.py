@@ -13,7 +13,7 @@ VERSION = "0.14.0"
 CAP = 8000
 MAXSIZE = 1_000_000
 MAXLINES = 20000
-AGENT = ["CLAUDE.md", "AGENTS.md", "TODO.md", "PROJECT.md"]
+AGENT = ["CLAUDE.md", "TODO.md", "PROJECT.md"]
 
 MODES = {
     "chatty": "concise useful commentary allowed; never narrate routine tool calls.",
@@ -35,29 +35,9 @@ Comms: {c}
 {s}"""
 
 ASK = "Ask via the AskUserQuestion tool (1-4 questions, 2-4 options each, multiSelect when choices combine, recommended option first), not as chat text."
-ASK_GENERIC = "Ask 1-4 short grouped questions with 2-4 labeled options each (recommended first), in one message."
 NAV = "Navigate graph/search first, read only needed source; reread only if stale/partial. Graph is an index, verify in source."
-NAV_GENERIC = ("Navigate: .kasper/graph.md (path | symbol:line | imports) is the repo index if present; query: python .kasper/kasper.py cmd find <name>; "
-               "after many file changes: python .kasper/kasper.py quiet. Search before mass reading; reread only if stale; verify in source.")
-TARGETS = {
-    "codex": "AGENTS.md", "opencode": "AGENTS.md", "amp": "AGENTS.md", "gemini": "GEMINI.md", "qwen": "QWEN.md",
-    "copilot": ".github/copilot-instructions.md", "cursor": ".cursor/rules/kasper.mdc", "aider": "CONVENTIONS.md",
-}
-BINS = {"codex": "codex", "opencode": "opencode", "amp": "amp", "gemini": "gemini", "qwen": "qwen",
-        "copilot": "copilot", "cursor": "cursor-agent", "aider": "aider"}
-BEGIN, END = "<!-- kasper:start -->", "<!-- kasper:end -->"
-FRONT = "---\nalwaysApply: true\n---\n"
 
-STYLE = """Style: comments only for intent/constraints/addresses. No summary .md unless asked. After the first skeleton write README.md (short, links) + docs/*.md, committed; agent files (CLAUDE.md AGENTS.md TODO.md PROJECT.md) are gitignored, never link them. Never echo diffs or commit text; commit only when asked, quietly (-q).
-"""
-
-CODEX = Path.home() / ".codex"
-PROMPT = """---
-description: kasper status | find | graph | rebuild | mode | style | setup | sync | help
-argument-hint: [status|find <q>|graph|rebuild|mode <name>|setup|help]
----
-Run: python "{p}" cmd $ARGUMENTS
-Reply with the output verbatim, nothing else. If it has a `Comms:` line, follow it from now on.
+STYLE = """Style: comments only for intent/constraints/addresses. No summary .md unless asked. After the first skeleton write README.md (short, links) + docs/*.md, committed; agent files (CLAUDE.md TODO.md PROJECT.md) are gitignored, never link them. Never echo diffs or commit text; commit only when asked, quietly (-q).
 """
 
 DEFAULTS = Path.home() / ".claude" / "kasper" / "defaults.json"  # last setup choices, applied to every new project
@@ -79,9 +59,7 @@ HELP = """/kasper                  status panel
 /kasper reinit           re-detect repo, rebuild all
 /kasper mode [m]         chatty|normal|quiet|mute (0-3)
 /kasper style [on|off]   code/docs/commit style rules (default off)
-/kasper agentfiles keep|replace   how to treat existing CLAUDE.md/AGENTS.md/...
-/kasper sync [names|all]  write kasper rules into other CLIs (codex gemini qwen copilot cursor aider opencode amp)
-/kasper unsync           remove them
+/kasper agentfiles keep|replace   how to treat existing CLAUDE.md/TODO.md/...
 /kasper help"""
 
 LANG = {
@@ -266,24 +244,8 @@ def extras(cfg):
     return (STYLE if cfg.get("style") else "") + (GITRULE if cfg.get("git") == "auto" else "")
 
 
-def install_codex(root):
-    """Stable script path + /prompts:kasper for Codex CLI, and the in-repo copy that NAV_GENERIC points to."""
-    me = Path(__file__).resolve()
-    for dst in (CODEX / "kasper" / "graph.py", root / ".kasper" / "kasper.py"):
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if not dst.exists() or not os.path.samefile(me, dst):
-            shutil.copyfile(me, dst)
-    pr = CODEX / "prompts" / "kasper.md"
-    pr.parent.mkdir(parents=True, exist_ok=True)
-    pr.write_text(PROMPT.format(p=CODEX / "kasper" / "graph.py"), encoding="utf-8")
-
-
-def setup(root, cfg, kv, codex=False):
-    """Apply first-run choices; settings go to project-local .claude/settings.local.json (Claude Code only)."""
-    kv = {k: v for k, v in kv.items() if k != "agent"}
-    if codex:
-        install_codex(root)
-        kv = {k: v for k, v in kv.items() if k in ("mode", "git")}
+def setup(root, cfg, kv):
+    """Apply first-run choices; settings go to project-local .claude/settings.local.json."""
     sf = root / ".claude" / "settings.local.json"
     st = load_json(sf, {})
     msg = []
@@ -324,59 +286,7 @@ def setup(root, cfg, kv, codex=False):
     save_cfg(root, cfg)
     DEFAULTS.parent.mkdir(parents=True, exist_ok=True)
     DEFAULTS.write_text(json.dumps({**load_json(DEFAULTS, {}), **kv}), encoding="utf-8")
-    if cfg.get("sync"):
-        sync(root, cfg, cfg["sync"])
     return "\n".join(msg) + f"\nComms: {MODES[cfg['mode']]}"
-
-
-def block(cfg):
-    rules = RULES.format(v=VERSION, q=ASK_GENERIC, n=NAV_GENERIC, c=MODES[cfg["mode"]], s=extras(cfg))
-    return f"{BEGIN}\n{rules}{END}\n"
-
-
-def managed(text):
-    return re.compile(re.escape(BEGIN) + ".*?" + re.escape(END) + "\n?", re.S)
-
-
-def sync(root, cfg, names):
-    """Write a managed kasper block into the instruction files of other CLIs."""
-    k = root / ".kasper"
-    k.mkdir(exist_ok=True)
-    dst = k / "kasper.py"
-    if not dst.exists() or not os.path.samefile(__file__, dst):
-        shutil.copyfile(__file__, dst)
-    done = []
-    if "codex" in names:
-        install_codex(root)
-    for rel in sorted({TARGETS[n] for n in names}):
-        f = root / rel
-        f.parent.mkdir(parents=True, exist_ok=True)
-        text = f.read_text(encoding="utf-8") if f.exists() else (FRONT if rel.endswith(".mdc") else "")
-        if BEGIN in text and END in text:
-            text = managed(text).sub(lambda m: block(cfg), text)
-        else:
-            text = text.rstrip("\n") + ("\n\n" if text.strip() else "") + block(cfg)
-        f.write_text(text, encoding="utf-8")
-        done.append(rel)
-    cfg["sync"] = sorted(set(names))
-    save_cfg(root, cfg)
-    return done
-
-
-def unsync(root, cfg):
-    gone = []
-    for rel in sorted(set(TARGETS.values())):
-        f = root / rel
-        if f.exists() and BEGIN in f.read_text(encoding="utf-8"):
-            text = managed("").sub("", f.read_text(encoding="utf-8")).rstrip("\n")
-            if text.replace(FRONT.rstrip("\n"), "").strip():
-                f.write_text(text + "\n", encoding="utf-8")
-            else:
-                f.unlink()
-            gone.append(rel)
-    cfg.pop("sync", None)
-    save_cfg(root, cfg)
-    return gone
 
 
 def agent_files(root, cfg):
@@ -450,26 +360,21 @@ def cmd(root, args):
         if m in MODES:
             cfg["mode"] = m
             save_cfg(root, cfg)
-            if cfg.get("sync"):
-                sync(root, cfg, cfg["sync"])
             return f"mode: {m}\nComms: {MODES[m]}"
         return f"mode: {cfg['mode']}\n" + " | ".join(MODES) + "\n/kasper mode <name|0-3>"
     if a == "setup":
         idx, cfg = refresh(root)
         kv = dict(x.split("=", 1) for x in rest if "=" in x)
-        codex = kv.get("agent") == "codex"
-        if not [k for k in kv if k != "agent"]:
+        if not kv:
             cfg.pop("setup", None)
             save_cfg(root, cfg)
-            return setup_text(codex)
-        return setup(root, cfg, kv, codex)
+            return setup_text()
+        return setup(root, cfg, kv)
     if a == "style":
         idx, cfg = refresh(root)
         if rest[:1] in (["on"], ["off"]):
             cfg["style"] = rest[0] == "on"
             save_cfg(root, cfg)
-            if cfg.get("sync"):
-                sync(root, cfg, cfg["sync"])
         return f"style: {'on' if cfg.get('style') else 'off'}" + (f"\n{STYLE}" if cfg.get("style") and rest else "")
     if a == "agentfiles":
         idx, cfg = refresh(root)
@@ -478,15 +383,6 @@ def cmd(root, args):
         cfg["agentfiles"] = rest[0]
         save_cfg(root, cfg)
         return f"agentfiles: {rest[0]}" + (agent_files(root, cfg) or "")
-    if a == "sync":
-        idx, cfg = refresh(root)
-        names = list(TARGETS) if rest[:1] == ["all"] else [n for n in rest if n in TARGETS] or [n for n, b in BINS.items() if shutil.which(b)]
-        if not names:
-            return "no other CLI found; pass names: " + " ".join(TARGETS)
-        return "synced: " + " ".join(sync(root, cfg, names))
-    if a == "unsync":
-        idx, cfg = refresh(root)
-        return "removed from: " + (" ".join(unsync(root, cfg)) or "nothing")
     if a == "find":
         idx, cfg = refresh(root)
         return find(idx, " ".join(rest)) if rest else "/kasper find <query>"
@@ -512,28 +408,21 @@ def cmd(root, args):
     return status(root, idx, cfg).split("\ninit:")[0] + "\ncommands: status | find | graph | rebuild | mode | style | agentfiles | reinit | help"
 
 
-def setup_text(codex):
-    t = SETUP.format(p=Path(__file__).resolve())
-    if codex:
-        t = t.replace("Ask ONE AskUserQuestion with 4 questions", "Ask ONE grouped message with 4 questions")
-        t = t.replace("compact=<tokens|off> statusline=on", "agent=codex  (Codex ignores subagents/compact/statusline)")
-    return t
+def setup_text():
+    return SETUP.format(p=Path(__file__).resolve())
 
 
-def session(root, codex=False):
+def session(root):
     idx, cfg = refresh(root)
     note = agent_files(root, cfg)
-    q, n = (ASK_GENERIC, NAV_GENERIC) if codex else (ASK, NAV)
-    if codex:
-        install_codex(root)
-    rules = RULES.format(v=VERSION, q=q, n=n, c=MODES[cfg["mode"]], s=extras(cfg))
+    rules = RULES.format(v=VERSION, q=ASK, n=NAV, c=MODES[cfg["mode"]], s=extras(cfg))
     if not cfg.get("setup"):
         saved = load_json(DEFAULTS, {})
         if saved:
-            note += "kasper: applied saved setup (" + setup(root, cfg, saved, codex).replace("\n", "; ") + "). /kasper setup to change.\n"
-            rules = RULES.format(v=VERSION, q=q, n=n, c=MODES[cfg["mode"]], s=extras(cfg))
+            note += "kasper: applied saved setup (" + setup(root, cfg, saved).replace("\n", "; ") + "). /kasper setup to change.\n"
+            rules = RULES.format(v=VERSION, q=ASK, n=NAV, c=MODES[cfg["mode"]], s=extras(cfg))
         else:
-            note += setup_text(codex)
+            note += setup_text()
     print(rules + note + "graph (path | symbol:line | imports):\n" + inject(idx))
 
 
@@ -612,4 +501,4 @@ if __name__ == "__main__":
         if not (path and refresh_one(root, path)):
             refresh(root)
     else:
-        session(root, sys.argv[2:3] == ["codex"])
+        session(root)
