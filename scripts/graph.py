@@ -9,7 +9,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "0.12.0"
+VERSION = "0.13.0"
 CAP = 8000
 MAXSIZE = 1_000_000
 MAXLINES = 20000
@@ -51,7 +51,18 @@ FRONT = "---\nalwaysApply: true\n---\n"
 STYLE = """Style: comments only for intent/constraints/addresses. No summary .md unless asked. After the first skeleton write README.md (short, links) + docs/*.md, committed; agent files (CLAUDE.md AGENTS.md TODO.md PROJECT.md) are gitignored, never link them. Never echo diffs or commit text; commit only when asked, quietly (-q).
 """
 
+DEFAULTS = Path.home() / ".claude" / "kasper" / "defaults.json"  # last setup choices, applied to every new project
+GITRULE ="Git: after each finished task run `git add -A` + `git commit -q -m <short msg>`; `git push -q` if an origin exists. Never echo commit text.\n"
+
+SETUP = ("kasper: first-run setup. Ask ONE AskUserQuestion with 4 questions: "
+         "(1) comms mode: quiet (rec) / normal / chatty / mute; "
+         "(2) git: commit after each task + push (rec) / init+commit only / off; "
+         "(3) max concurrent subagents: 2 (rec) / 1 / custom via Other; "
+         "(4) autocompact window: 350k (rec) / 200k / off. "
+         "Then run: python \"{p}\" cmd setup mode=<name> git=<auto|init|off> subagents=<n> compact=<tokens|off> statusline=on\n")
+
 HELP = """/kasper                  status panel
+/kasper setup [k=v ...]  first-run wizard / apply: mode git subagents compact statusline
 /kasper status           details
 /kasper find <query>     ranked hits from the graph (path | symbols | used-by)
 /kasper graph            open html map (graph rebuild: force)
@@ -242,8 +253,59 @@ def find(idx, q):
     return f"{len(hits)} matches\n" + "\n".join(f"{f} | {' '.join(s[:6])} | used by {n.get(f, 0)}" for _, f, s in hits[:15])
 
 
+def extras(cfg):
+    return (STYLE if cfg.get("style") else "") + (GITRULE if cfg.get("git") == "auto" else "")
+
+
+def setup(root, cfg, kv):
+    """Apply first-run choices; settings go to project-local .claude/settings.local.json."""
+    sf = root / ".claude" / "settings.local.json"
+    st = load_json(sf, {})
+    msg = []
+    if kv.get("mode") in MODES:
+        cfg["mode"] = kv["mode"]
+        msg.append(f"mode: {kv['mode']}")
+    if kv.get("git") in ("auto", "init", "off"):
+        cfg["git"] = kv["git"]
+        if kv["git"] != "off":
+            if not (root / ".git").exists():
+                subprocess.run(["git", "init", "-q"], cwd=root)
+            gh = shutil.which("gh") and subprocess.run(["gh", "auth", "status"], capture_output=True).returncode == 0
+            msg.append("git: " + kv["git"] + ("" if gh else " (not logged in: user runs `! gh auth login`)"))
+        else:
+            msg.append("git: off")
+    if kv.get("subagents", "").isdigit():
+        st.setdefault("env", {})["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = kv["subagents"]
+        msg.append(f"subagents: {kv['subagents']} (restart to apply)")
+    if kv.get("compact"):
+        if kv["compact"].isdigit():
+            st["autoCompactWindow"] = int(kv["compact"])
+        else:
+            st.pop("autoCompactWindow", None)
+        msg.append(f"autocompact: {kv['compact']}")
+    if kv.get("statusline") == "on":
+        if "statusLine" in st or "statusLine" in load_json(Path.home() / ".claude" / "settings.json", {}):
+            msg.append("statusline: kept existing")
+        else:
+            dst = Path.home() / ".claude" / "kasper" / "statusline.py"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(Path(__file__).with_name("statusline.py"), dst)
+            st["statusLine"] = {"type": "command", "command": f'python "{dst}"'}
+            msg.append("statusline: on")
+    if any(k in st for k in ("env", "autoCompactWindow", "statusLine")):
+        sf.parent.mkdir(exist_ok=True)
+        sf.write_text(json.dumps(st, indent=2), encoding="utf-8")
+    cfg["setup"] = True
+    save_cfg(root, cfg)
+    DEFAULTS.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULTS.write_text(json.dumps({**load_json(DEFAULTS, {}), **kv}), encoding="utf-8")
+    if cfg.get("sync"):
+        sync(root, cfg, cfg["sync"])
+    return "\n".join(msg) + f"\nComms: {MODES[cfg['mode']]}"
+
+
 def block(cfg):
-    rules = RULES.format(v=VERSION, q=ASK_GENERIC, n=NAV_GENERIC, c=MODES[cfg["mode"]], s=STYLE if cfg.get("style") else "")
+    rules = RULES.format(v=VERSION, q=ASK_GENERIC, n=NAV_GENERIC, c=MODES[cfg["mode"]], s=extras(cfg))
     return f"{BEGIN}\n{rules}{END}\n"
 
 
@@ -365,6 +427,14 @@ def cmd(root, args):
                 sync(root, cfg, cfg["sync"])
             return f"mode: {m}\nComms: {MODES[m]}"
         return f"mode: {cfg['mode']}\n" + " | ".join(MODES) + "\n/kasper mode <name|0-3>"
+    if a == "setup":
+        idx, cfg = refresh(root)
+        kv = dict(x.split("=", 1) for x in rest if "=" in x)
+        if not kv:
+            cfg.pop("setup", None)
+            save_cfg(root, cfg)
+            return SETUP.format(p=Path(__file__).resolve())
+        return setup(root, cfg, kv)
     if a == "style":
         idx, cfg = refresh(root)
         if rest[:1] in (["on"], ["off"]):
@@ -417,7 +487,14 @@ def cmd(root, args):
 def session(root):
     idx, cfg = refresh(root)
     note = agent_files(root, cfg)
-    rules = RULES.format(v=VERSION, q=ASK, n=NAV, c=MODES[cfg["mode"]], s=STYLE if cfg.get("style") else "")
+    rules = RULES.format(v=VERSION, q=ASK, n=NAV, c=MODES[cfg["mode"]], s=extras(cfg))
+    if not cfg.get("setup"):
+        saved = load_json(DEFAULTS, {})
+        if saved:
+            note += "kasper: applied saved setup (" + setup(root, cfg, saved).replace("\n", "; ") + "). /kasper setup to change.\n"
+            rules = RULES.format(v=VERSION, q=ASK, n=NAV, c=MODES[cfg["mode"]], s=extras(cfg))
+        else:
+            note += SETUP.format(p=Path(__file__).resolve())
     print(rules + note + "graph (path | symbol:line | imports):\n" + inject(idx))
 
 
